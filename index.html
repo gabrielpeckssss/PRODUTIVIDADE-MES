@@ -184,7 +184,7 @@ tr:hover .tooltip { display:block; }
         <div class="kpi"><div class="kpi-val" id="k4">—</div><div class="kpi-lbl">Média geral</div></div>
       </div>
     </div>
-    <div class="hero-upd">Última atualização<br><strong>10 abr 2026 · 16:35</strong></div>
+    <div class="hero-upd">Última atualização<br><span id="load-status" style="font-size:10px;color:rgba(255,255,255,0.4);font-style:italic"></span><strong class="upd-val">10 abr 2026 · 16:35</strong></div>
   </div>
 
   <div class="controls">
@@ -206,6 +206,64 @@ tr:hover .tooltip { display:block; }
 </div>
 
 <script>
+const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSlKnvLY6rJ1EcaxaWMdo2Qqor5DvhhYscL4zd-FIa3sUz_QJ05m2aLhLVDpocNo54VWh_EYsgnFrmt/pub?gid=758374214&single=true&output=csv';
+
+function parseName(raw){ return (raw||'').trim().replace(/\s+/g,' '); }
+function parseNum(v){ if(!v||v===''||typeof v==='undefined') return 0; const n=parseFloat(String(v).replace(',','.')); return isNaN(n)?0:Math.round(n); }
+
+async function loadCSV(){
+  try {
+    document.getElementById('load-status').textContent = 'Atualizando dados...';
+    const resp = await fetch(CSV_URL);
+    const text = await resp.text();
+    const rows = text.split('\n').map(r=>{
+      const cols=[]; let cur='', inQ=false;
+      for(let i=0;i<r.length;i++){
+        if(r[i]==='"'){inQ=!inQ;}
+        else if(r[i]===','&&!inQ){cols.push(cur);cur='';}
+        else cur+=r[i];
+      }
+      cols.push(cur);
+      return cols;
+    });
+
+    // Section 1: separadores rows 3-59 (index 2-58), col A=0,M=12,N=13,O=14,H=7
+    const sep=[], conf=[];
+    for(let i=2;i<59;i++){
+      const r=rows[i]; if(!r||!r[0]||r[0].trim()===''||r[0].includes('atualiza')) continue;
+      const m=parseNum(r[12]); if(m<=0) continue;
+      sep.push({n:parseName(r[0]),s:m,m:parseNum(r[7])||8500,a:parseNum(r[13]),x:parseNum(r[14])});
+    }
+    // Section 2: conferentes rows 63+ (index 62+), col P=15
+    for(let i=62;i<rows.length;i++){
+      const r=rows[i]; if(!r||!r[0]||r[0].trim()==='') continue;
+      const m=parseNum(r[12]); if(m<=0) continue;
+      conf.push({n:parseName(r[0]),s:m,m:parseNum(r[7])||9100,a:parseNum(r[13]),x:parseNum(r[15])});
+    }
+
+    sep.sort((a,b)=>b.s-a.s);
+    conf.sort((a,b)=>b.s-a.s);
+
+    // Update last update from row 60 col B (index 59,1)
+    const upd = rows[59]?rows[59][1]:'';
+    if(upd){
+      try{
+        const d=new Date(upd);
+        if(!isNaN(d)){
+          const fmt=d.toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'});
+          const hm=d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+          document.querySelectorAll('.upd-val').forEach(el=>el.textContent=fmt+' · '+hm);
+        }
+      }catch(e){}
+    }
+
+    document.getElementById('load-status').textContent = '';
+    return {sep,conf};
+  } catch(e){
+    throw e;
+  }
+}
+
 const sep=[
   {n:"Beatriz S",s:4083,m:8500,a:0,x:127},{n:"Luciano Pereira",s:3565,m:8500,a:0,x:111},
   {n:"Gabriel F.",s:2701,m:8500,a:0,x:84},{n:"Carlos Alberto",s:2689,m:8500,a:0,x:84},
@@ -301,7 +359,39 @@ function setTab(t,el){
   curTab=t;
   document.querySelectorAll('.tab').forEach(b=>b.className='tab');
   el.className='tab on-'+t;
+  function updateKPIs(sepList, confList){
+  const allD=[...sepList,...confList];
+  document.getElementById('k1').textContent=sepList.length;
+  document.getElementById('k2').textContent=confList.length;
+  document.getElementById('k3').textContent=Math.max(...allD.map(p=>p.s)).toLocaleString('pt-BR');
+  document.getElementById('k4').textContent=Math.round(allD.reduce((a,p)=>a+p.s,0)/allD.length).toLocaleString('pt-BR');
+}
+
+// Init: try live CSV, fallback to static data silently
+(async ()=>{
+  // Always render static data first so page is never blank
+  updateKPIs(sepA, confA);
   render();
+
+  // Then try to fetch live update
+  const status = document.getElementById('load-status');
+  try {
+    status.textContent = 'Sincronizando...';
+    const data = await loadCSV();
+    if(data && data.sep.length > 0){
+      sepA.length=0; confA.length=0;
+      data.sep.forEach((p,i)=>sepA.push({...p,t:'sep',r:i+1}));
+      data.conf.forEach((p,i)=>confA.push({...p,t:'conf',r:i+1}));
+      updateKPIs(data.sep, data.conf);
+      render();
+      status.textContent = '';
+    } else {
+      status.textContent = '';
+    }
+  } catch(e){
+    status.textContent = '';
+  }
+})();
 }
 function render(){
   const q=(document.getElementById('search')||{value:''}).value.toLowerCase();
@@ -316,7 +406,39 @@ function render(){
     });
   },60));
 }
-render();
+function updateKPIs(sepList, confList){
+  const allD=[...sepList,...confList];
+  document.getElementById('k1').textContent=sepList.length;
+  document.getElementById('k2').textContent=confList.length;
+  document.getElementById('k3').textContent=Math.max(...allD.map(p=>p.s)).toLocaleString('pt-BR');
+  document.getElementById('k4').textContent=Math.round(allD.reduce((a,p)=>a+p.s,0)/allD.length).toLocaleString('pt-BR');
+}
+
+// Init: try live CSV, fallback to static data silently
+(async ()=>{
+  // Always render static data first so page is never blank
+  updateKPIs(sepA, confA);
+  render();
+
+  // Then try to fetch live update
+  const status = document.getElementById('load-status');
+  try {
+    status.textContent = 'Sincronizando...';
+    const data = await loadCSV();
+    if(data && data.sep.length > 0){
+      sepA.length=0; confA.length=0;
+      data.sep.forEach((p,i)=>sepA.push({...p,t:'sep',r:i+1}));
+      data.conf.forEach((p,i)=>confA.push({...p,t:'conf',r:i+1}));
+      updateKPIs(data.sep, data.conf);
+      render();
+      status.textContent = '';
+    } else {
+      status.textContent = '';
+    }
+  } catch(e){
+    status.textContent = '';
+  }
+})();
 </script>
 </body>
 </html>
